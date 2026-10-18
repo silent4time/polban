@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# Polban CLI — sudo polban
+set -euo pipefail
+
+APP="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+SRC="${PB_SRC:-/opt/polban-src}"
+VERSION="$(tr -d '[:space:]' < "$APP/VERSION" 2>/dev/null || echo '?')"
+
+need_root() {
+  if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
+    echo "با root اجرا کنید:  sudo polban"
+    exit 1
+  fi
+}
+
+status() {
+  echo "پل‌بان $VERSION"
+  echo "نصب:     $APP"
+  echo "سورس:    $SRC"
+  if [[ -f "$APP/config.php" ]]; then
+    php -r '$c=require "'"$APP"'/config.php"; echo "base_url: ".($c["base_url"]?:"(خالی)")."\n"; echo "allowlist: ".count((array)$c["allowlist"])."\n"; echo "admin:    /".trim($c["admin_path"],"/")."\n";'
+  else
+    echo "config.php نیست — نصب را کامل کنید."
+  fi
+  if command -v curl >/dev/null 2>&1 && [[ -f "$APP/config.php" ]]; then
+    base="$(php -r 'echo rtrim((require "'"$APP"'/config.php")["base_url"]??"", "/");')"
+    if [[ -n "$base" ]]; then
+      echo -n "health:   "
+      curl -fsS --max-time 8 "$base/v1/health" || echo "unreachable"
+      echo
+    fi
+  fi
+}
+
+menu() {
+  need_root
+  while true; do
+    echo
+    echo "======= پل‌بان $VERSION ======="
+    echo "  1) نصب / باز‌پیکربندی"
+    echo "  2) به‌روزرسانی از سورس git"
+    echo "  3) وضعیت"
+    echo "  4) نمایش مسیر پنل مدیریت وب"
+    echo "  5) خروج"
+    echo "================================"
+    read -r -p "گزینه: " c </dev/tty || exit 0
+    case "$c" in
+      1) bash "$SRC/install.sh" || bash "$APP/../polban-src/install.sh" 2>/dev/null || bash "$APP/install.sh" ;;
+      2)
+        if [[ -d "$SRC/.git" ]]; then
+          git -C "$SRC" pull --ff-only
+          bash "$SRC/install.sh" -y
+        else
+          echo "سورس git در $SRC پیدا نشد. اول کلون کنید."
+        fi
+        ;;
+      3) status ;;
+      4)
+        if [[ -f "$APP/config.php" ]]; then
+          php -r '$c=require "'"$APP"'/config.php"; echo rtrim($c["base_url"],"/")."/".trim($c["admin_path"],"/")."/\n";'
+        else
+          echo "هنوز نصب نشده."
+        fi
+        ;;
+      5) exit 0 ;;
+      *) echo "گزینه نامعتبر" ;;
+    esac
+  done
+}
+
+cmd="${1:-}"
+case "$cmd" in
+  ""|menu) menu ;;
+  status) status ;;
+  update)
+    need_root
+    [[ -d "$SRC/.git" ]] || { echo "no git src at $SRC"; exit 1; }
+    git -C "$SRC" pull --ff-only
+    exec bash "$SRC/install.sh" -y
+    ;;
+  install)
+    need_root
+    exec bash "${SRC}/install.sh"
+    ;;
+  help|-h|--help)
+    echo "sudo polban          منوی مدیریت"
+    echo "sudo polban status   وضعیت"
+    echo "sudo polban update   git pull + نصب"
+    echo "sudo polban install  اجرای install.sh"
+    ;;
+  *) echo "unknown: $cmd"; exit 1 ;;
+esac
