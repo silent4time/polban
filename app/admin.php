@@ -49,7 +49,15 @@ if (pb_admin_ok() && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save
         $cfg['api_key'] = bin2hex(random_bytes(24));
     }
     $export = "<?php\nreturn " . var_export($cfg, true) . ";\n";
-    file_put_contents(PB_ROOT . '/config.php', $export);
+    $cfg_file = PB_ROOT . '/config.php';
+    if (@file_put_contents($cfg_file, $export, LOCK_EX) === false) {
+        pb_log('admin save FAILED: config.php not writable');
+        header('Location: ' . $path . '/?save_error=1');
+        exit;
+    }
+    if (function_exists('opcache_invalidate')) {
+        @opcache_invalidate($cfg_file, true);
+    }
     pb_log('admin updated allowlist/key');
     header('Location: ' . $path . '/?saved=1');
     exit;
@@ -101,6 +109,7 @@ $allow = implode("\n", (array) $cfg['allowlist']);
 </div>
 <p class="muted">نسخه <?= htmlspecialchars(PB_VERSION) ?> — سلامت: <code>/v1/health</code> — پروکسی: <code>POST /v1/proxy</code></p>
 <?php if (!empty($_GET['saved'])): ?><div class="ok">ذخیره شد.</div><?php endif; ?>
+<?php if (!empty($_GET['save_error'])): ?><div class="err">ذخیره نشد: فایل config.php قابل نوشتن نیست. روی سرور sudo polban و گزینهٔ ۲ (به‌روزرسانی) را اجرا کنید.</div><?php endif; ?>
 <p>کلید API فعلی: <code><?= htmlspecialchars(substr((string)$cfg['api_key'],0,8)) ?>…</code></p>
 <form method="post">
 <input type="hidden" name="save_allow" value="1">

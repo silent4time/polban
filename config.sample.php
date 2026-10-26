@@ -17,7 +17,7 @@ return array(
         // 'https://panel.example.com:8443',
     ),
     // Request timeout to upstream (seconds)
-    'timeout'      => 25,
+    'timeout'      => 60,
     // Verify upstream TLS certificates
     'verify_ssl'   => false,
 );

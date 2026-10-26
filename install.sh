@@ -57,6 +57,15 @@ echo "  مسیر نصب: $TARGET"
 echo
 
 TARGET="$(ask "مسیر نصب [$TARGET]:" "$TARGET")"
+
+# Update mode: existing install + -y keeps config.php, only syncs code and fixes permissions
+UPDATE=0
+if [[ $ASSUME_YES -eq 1 && -f "$TARGET/config.php" ]]; then
+  UPDATE=1
+  say "حالت به‌روزرسانی: config.php فعلی حفظ می‌شود."
+fi
+
+if [[ $UPDATE -eq 0 ]]; then
 BASE_URL="$(ask "آدرس عمومی پل‌بان (مثل https://bridge.example.com):" "")"
 [[ -n "$BASE_URL" ]] || die "base URL required"
 BASE_URL="${BASE_URL%/}"
@@ -69,6 +78,7 @@ ADMIN_PASS="$(ask "رمز پنل مدیریت وب:" "")"
 ADMIN_PATH="pb-$(openssl rand -hex 4 2>/dev/null || echo a1b2c3d4)"
 
 ALLOW="$(ask "مبدأ مجاز پنل اول (مثل https://panel.example.com:8443 ، خالی = بعداً):" "")"
+fi
 
 mkdir -p "$BACKUP_DIR"
 if [[ -d "$TARGET" && -f "$TARGET/config.php" ]]; then
@@ -99,6 +109,7 @@ if [[ "$(readlink -f "$SRC")" != "$(readlink -f "$SRC_DIR")" ]]; then
   fi
 fi
 
+if [[ $UPDATE -eq 0 ]]; then
 export PB_BASE_URL="$BASE_URL" PB_API_KEY="$API_KEY" PB_ADMIN_PASS="$ADMIN_PASS" PB_ADMIN_PATH="$ADMIN_PATH" PB_ALLOW="$ALLOW" PB_CFG="$TARGET/config.php"
 php <<'PHP'
 <?php
@@ -113,13 +124,19 @@ $cfg = array(
     'admin_pass' => password_hash((string) getenv('PB_ADMIN_PASS'), PASSWORD_DEFAULT),
     'admin_path' => (string) getenv('PB_ADMIN_PATH'),
     'allowlist'  => $allow,
-    'timeout'    => 25,
+    'timeout'    => 60,
     'verify_ssl' => false,
 );
 $file = getenv('PB_CFG');
 file_put_contents($file, "<?php\nreturn " . var_export($cfg, true) . ";\n");
 PHP
-chmod 640 "$TARGET/config.php"
+else
+  # Migrate: raise old default upstream timeout to 60s
+  PB_CFG="$TARGET/config.php" php -r '$f=getenv("PB_CFG"); $c=require $f; if ((int)($c["timeout"]??25) < 60) { $c["timeout"]=60; file_put_contents($f, "<?php\nreturn ".var_export($c,true).";\n"); echo "[*] timeout -> 60\n"; }'
+fi
+# Web panel (www-data) must be able to rewrite config.php
+chown "root:$WEB_USER" "$TARGET/config.php"
+chmod 660 "$TARGET/config.php"
 chown -R "$WEB_USER:$WEB_USER" "$TARGET/storage" 2>/dev/null || true
 
 install -m 755 "$TARGET/bin/polban" /usr/local/bin/polban

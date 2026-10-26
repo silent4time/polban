@@ -77,7 +77,7 @@ function pb_proxy(array $cfg, $method, $url, array $headers, $body) {
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_HEADER         => true,
         CURLOPT_HTTPHEADER     => $h,
-        CURLOPT_TIMEOUT        => (int) ($cfg['timeout'] ?? 25),
+        CURLOPT_TIMEOUT        => (int) ($cfg['timeout'] ?? 60),
         CURLOPT_SSL_VERIFYPEER => !empty($cfg['verify_ssl']),
         CURLOPT_SSL_VERIFYHOST => !empty($cfg['verify_ssl']) ? 2 : 0,
         CURLOPT_FOLLOWLOCATION => false,
