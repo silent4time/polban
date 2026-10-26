@@ -2,9 +2,19 @@
 # Polban CLI — sudo polban
 set -euo pipefail
 
-APP="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+SELF="$(readlink -f "${BASH_SOURCE[0]}")"
 SRC="${PB_SRC:-/opt/polban-src}"
-VERSION="$(tr -d '[:space:]' < "$APP/VERSION" 2>/dev/null || echo '?')"
+# Find the real install dir (old installs copied this file to /usr/local/bin)
+APP="${PB_APP:-}"
+for d in "$APP" "$(cd "$(dirname "$SELF")/.." && pwd)" /home/polban; do
+  if [[ -n "$d" && -f "$d/config.php" ]]; then APP="$d"; break; fi
+done
+[[ -n "$APP" ]] || APP="/home/polban"
+VERSION="?"
+for d in "$APP" "$SRC"; do
+  if [[ -f "$d/VERSION" ]]; then VERSION="$(tr -d '[:space:]' < "$d/VERSION")"; break; fi
+done
+SRC_VERSION="$(tr -d '[:space:]' < "$SRC/VERSION" 2>/dev/null || echo '?')"
 
 need_root() {
   if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
@@ -14,7 +24,7 @@ need_root() {
 }
 
 status() {
-  echo "پل‌بان $VERSION"
+  echo "پل‌بان $VERSION (سورس: $SRC_VERSION)"
   echo "نصب:     $APP"
   echo "سورس:    $SRC"
   if [[ -f "$APP/config.php" ]]; then
@@ -45,11 +55,18 @@ menu() {
     echo "================================"
     read -r -p "گزینه: " c </dev/tty || exit 0
     case "$c" in
-      1) bash "$SRC/install.sh" || bash "$APP/../polban-src/install.sh" 2>/dev/null || bash "$APP/install.sh" ;;
+      1)
+        if [[ -f "$APP/config.php" ]]; then
+          read -r -p "نصب قبلی وجود دارد؛ نصب تازه کلید API و رمز پنل را عوض می‌کند. ادامه؟ (yes/no) " y </dev/tty || y=""
+          [[ "$y" == "yes" ]] || { echo "لغو شد."; continue; }
+        fi
+        bash "$SRC/install.sh" --install --dir "$APP" || echo "نصب ناموفق بود."
+        ;;
       2)
-        if [[ -d "$SRC/.git" ]]; then
-          git -C "$SRC" pull --ff-only
-          bash "$SRC/install.sh" -y
+        if [[ ! -f "$APP/config.php" ]]; then
+          echo "هنوز نصب نشده؛ گزینهٔ ۱ را بزنید."
+        elif [[ -d "$SRC/.git" ]]; then
+          git -C "$SRC" pull --ff-only && bash "$SRC/install.sh" --update --dir "$APP" || echo "به‌روزرسانی ناموفق بود."
         else
           echo "سورس git در $SRC پیدا نشد. اول کلون کنید."
         fi
@@ -76,11 +93,11 @@ case "$cmd" in
     need_root
     [[ -d "$SRC/.git" ]] || { echo "no git src at $SRC"; exit 1; }
     git -C "$SRC" pull --ff-only
-    exec bash "$SRC/install.sh" -y
+    exec bash "$SRC/install.sh" --update --dir "$APP"
     ;;
   install)
     need_root
-    exec bash "${SRC}/install.sh"
+    exec bash "${SRC}/install.sh" --install --dir "$APP"
     ;;
   help|-h|--help)
     echo "sudo polban          منوی مدیریت"

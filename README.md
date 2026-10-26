@@ -12,6 +12,10 @@
 curl -fsSL https://raw.githubusercontent.com/silent4time/polban/main/get.sh | sudo bash
 ```
 
+بعد از اجرا منوی مدیریت باز می‌شود (نصب تازه، به‌روزرسانی، وضعیت، مسیر پنل).
+```bash
+```
+
 ریپو خصوصی است؛ یکی از این‌ها لازم است:
 
 - متغیر محیطی `GH_TOKEN` با دسترسی خواندن ریپو، یا

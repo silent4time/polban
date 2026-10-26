@@ -7,12 +7,15 @@
 # Or from a checkout:
 #   sudo bash install.sh
 #
-# Options: -y   non-interactive defaults where possible
+# No options: opens the management menu (bin/polban).
+# Options: --install  fresh install / reconfigure (interactive)
+#          -y|--update  update existing install, keep config.php
 set -euo pipefail
 
 TARGET="/home/polban"
 SRC_DIR="/opt/polban-src"
 ASSUME_YES=0
+MODE=""
 BACKUP_DIR="/root/polban-backups"
 TS="$(date +%Y%m%d-%H%M%S)"
 WEB_USER="www-data"
@@ -23,7 +26,8 @@ die()  { echo "[x] $*" >&2; exit 1; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    -y|--yes) ASSUME_YES=1 ;;
+    -y|--yes|--update) ASSUME_YES=1; MODE="run" ;;
+    --install) MODE="run" ;;
     --dir) TARGET="${2:?}"; shift ;;
     -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
     *) die "unknown option: $1" ;;
@@ -44,6 +48,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 is_src() { [[ -f "$1/public/index.php" && -f "$1/lib/bootstrap.php" && -f "$1/VERSION" ]]; }
 is_src "$SCRIPT_DIR" || die "run from polban source tree"
 SRC="$SCRIPT_DIR"
+
+# Default: show the management menu instead of installing directly
+if [[ -z "$MODE" ]]; then
+  chmod +x "$SRC/bin/polban" 2>/dev/null || true
+  PB_SRC="$SRC" PB_APP="$TARGET" exec bash "$SRC/bin/polban" menu
+fi
 VERSION="$(tr -d '[:space:]' < "$SRC/VERSION")"
 
 command -v php >/dev/null 2>&1 || { apt-get update -y; apt-get install -y php-cli php-curl php-sqlite3; }
@@ -139,7 +149,9 @@ chown "root:$WEB_USER" "$TARGET/config.php"
 chmod 660 "$TARGET/config.php"
 chown -R "$WEB_USER:$WEB_USER" "$TARGET/storage" 2>/dev/null || true
 
-install -m 755 "$TARGET/bin/polban" /usr/local/bin/polban
+chmod 755 "$TARGET/bin/polban"
+rm -f /usr/local/bin/polban
+ln -s "$TARGET/bin/polban" /usr/local/bin/polban
 # rewrite APP discovery is fine via readlink
 
 # Update mode: read display values from existing config (never the API key)
@@ -187,7 +199,7 @@ echo
 echo "  آدرس سرویس:   $BASE_URL"
 echo "  سلامت:         $BASE_URL/v1/health"
 echo "  پنل مدیریت:    $BASE_URL/$ADMIN_PATH/"
-echo "  کلید API:      $API_KEY"
+echo "  کلید API:      در $TARGET/config.php ذخیره شد (چاپ نمی‌شود؛ با sudo grep api_key $TARGET/config.php ببینید)"
 echo "  فرمان مدیریت:  sudo polban"
 echo
 echo "  این کلید را در افزونهٔ ابزار شبکه (تنظیمات پل‌بان) بگذارید."
