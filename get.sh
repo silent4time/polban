@@ -18,7 +18,7 @@ command -v curl >/dev/null 2>&1 || apt-get install -y curl
 
 clone_repo() {
   if [[ -n "${GH_TOKEN:-}" ]]; then
-    git clone --depth 1 "https://${GH_TOKEN}@github.com/${REPO}.git" "$SRC"
+    git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" "$SRC"
     return
   fi
   if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
@@ -30,13 +30,20 @@ clone_repo() {
   exit 1
 }
 
-if [[ -d "$SRC/.git" ]]; then
-  git -C "$SRC" pull --ff-only
+if [[ -d "$SRC/.git" ]] && [[ "$(git --git-dir="$SRC/.git" config --get core.bare 2>/dev/null || echo false)" != "true" ]]; then
+  # Existing checkout: discard local edits / mode changes and go to origin/main
+  git -C "$SRC" config core.fileMode false
+  git -C "$SRC" fetch --prune origin "+refs/heads/main:refs/remotes/origin/main"
+  git -C "$SRC" checkout -q -B main origin/main
+  git -C "$SRC" reset -q --hard origin/main
+  git -C "$SRC" clean -fdq
 else
+  [[ -e "$SRC" ]] && mv "$SRC" "$SRC.old.$(date +%Y%m%d-%H%M%S)"
   rm -rf "$SRC"
   mkdir -p "$(dirname "$SRC")"
   clone_repo
 fi
 
-chmod +x "$SRC/install.sh" "$SRC/bin/polban" "$SRC/get.sh"
+git -C "$SRC" config core.fileMode false
+# No chmod here (it used to dirty the checkout); scripts are run via bash.
 exec bash "$SRC/install.sh"

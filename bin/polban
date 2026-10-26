@@ -1,86 +1,134 @@
 #!/usr/bin/env bash
-# Polban CLI — sudo polban
+# Polban CLI - run: sudo polban
 set -euo pipefail
 
 SELF="$(readlink -f "${BASH_SOURCE[0]}")"
 SRC="${PB_SRC:-/opt/polban-src}"
-# Find the real install dir (old installs copied this file to /usr/local/bin)
-APP="${PB_APP:-}"
-for d in "$APP" "$(cd "$(dirname "$SELF")/.." && pwd)" /home/polban; do
+DEFAULT_REPO="https://github.com/silent4time/polban.git"
+BRANCH="${PB_BRANCH:-main}"
+
+# Find the real install dir. Works when this file is a symlink into the
+# install dir, and with old installs that COPIED it to /usr/local/bin.
+APP=""
+for d in "${PB_APP:-}" "$(cd "$(dirname "$SELF")/.." && pwd)" /home/polban; do
   if [[ -n "$d" && -f "$d/config.php" ]]; then APP="$d"; break; fi
 done
-[[ -n "$APP" ]] || APP="/home/polban"
-VERSION="?"
-for d in "$APP" "$SRC"; do
-  if [[ -f "$d/VERSION" ]]; then VERSION="$(tr -d '[:space:]' < "$d/VERSION")"; break; fi
-done
-SRC_VERSION="$(tr -d '[:space:]' < "$SRC/VERSION" 2>/dev/null || echo '?')"
+[[ -n "$APP" ]] || APP="${PB_APP:-/home/polban}"
+
+read_version() { tr -d '[:space:]' < "$1/VERSION" 2>/dev/null || echo '?'; }
+VERSION="$(read_version "$APP")"
+SRC_VERSION="$(read_version "$SRC")"
 
 need_root() {
   if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
-    echo "با root اجرا کنید:  sudo polban"
+    echo "Run as root: sudo polban"
     exit 1
   fi
 }
 
+cfg_get() { # cfg_get key  (never use for api_key)
+  PB_CFG="$APP/config.php" PB_K="$1" php -r '$c=require getenv("PB_CFG"); $v=$c[getenv("PB_K")] ?? ""; echo is_array($v) ? count($v) : (string)$v;'
+}
+
 status() {
-  echo "پل‌بان $VERSION (سورس: $SRC_VERSION)"
-  echo "نصب:     $APP"
-  echo "سورس:    $SRC"
+  echo "Polban $VERSION (source: $SRC_VERSION)"
+  echo "Install dir: $APP"
+  echo "Source dir:  $SRC"
   if [[ -f "$APP/config.php" ]]; then
-    php -r '$c=require "'"$APP"'/config.php"; echo "base_url: ".($c["base_url"]?:"(خالی)")."\n"; echo "allowlist: ".count((array)$c["allowlist"])."\n"; echo "admin:    /".trim($c["admin_path"],"/")."\n";'
-  else
-    echo "config.php نیست — نصب را کامل کنید."
-  fi
-  if command -v curl >/dev/null 2>&1 && [[ -f "$APP/config.php" ]]; then
-    base="$(php -r 'echo rtrim((require "'"$APP"'/config.php")["base_url"]??"", "/");')"
-    if [[ -n "$base" ]]; then
-      echo -n "health:   "
-      curl -fsS --max-time 8 "$base/v1/health" || echo "unreachable"
+    echo "base_url:    $(cfg_get base_url)"
+    echo "allowlist:   $(cfg_get allowlist) origin(s)"
+    echo "admin path:  /$(cfg_get admin_path | sed 's#^/*##;s#/*$##')/"
+    echo "timeout:     $(cfg_get timeout)s"
+    echo "config.php:  $(stat -c '%U:%G %a' "$APP/config.php")"
+    echo "API key:     stored in config.php (view: sudo grep api_key $APP/config.php)"
+    local base
+    base="$(cfg_get base_url)"; base="${base%/}"
+    if [[ -n "$base" ]] && command -v curl >/dev/null 2>&1; then
+      echo -n "health:      "
+      curl -fsS --max-time 8 "$base/v1/health" 2>/dev/null || echo -n "unreachable"
       echo
     fi
+  else
+    echo "config.php not found - not installed yet (choose 1 / sudo polban install)."
   fi
+}
+
+admin_url() {
+  if [[ -f "$APP/config.php" ]]; then
+    local base path
+    base="$(cfg_get base_url)"; path="$(cfg_get admin_path)"
+    echo "${base%/}/$(echo "$path" | sed 's#^/*##;s#/*$##')/"
+  else
+    echo "Not installed yet."
+  fi
+}
+
+# Bring $SRC to exactly origin/$BRANCH, discarding local edits/mode changes.
+# Handles old installs where $SRC/.git is a bare "git clone --mirror".
+sync_src() {
+  local url="" bare="false"
+  if [[ -e "$SRC/.git" || -d "$SRC" ]]; then
+    url="$(git -C "$SRC" config --get remote.origin.url 2>/dev/null || true)"
+    bare="$(git --git-dir="$SRC/.git" config --get core.bare 2>/dev/null || echo false)"
+  fi
+  url="${PB_REPO_URL:-$url}"
+  # Old mirror pointed at a local path that may be gone: fall back to GitHub
+  if [[ -z "$url" || ( "$url" == /* && ! -e "$url" ) ]]; then url="$DEFAULT_REPO"; fi
+
+  if [[ ! -d "$SRC/.git" || "$bare" == "true" ]] || ! git -C "$SRC" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "[*] $SRC is not a normal git checkout; re-cloning from $url"
+    local tmp="$SRC.new.$$"
+    rm -rf "$tmp"
+    git clone --branch "$BRANCH" "$url" "$tmp" || { echo "[x] clone failed (private repo: set GH_TOKEN or gh auth login)"; rm -rf "$tmp"; return 1; }
+    if [[ -e "$SRC" ]]; then mv "$SRC" "$SRC.old.$(date +%Y%m%d-%H%M%S)"; fi
+    mv "$tmp" "$SRC"
+  fi
+  git -C "$SRC" config core.fileMode false
+  git -C "$SRC" fetch --prune origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" || { echo "[x] git fetch failed"; return 1; }
+  git -C "$SRC" checkout -q -B "$BRANCH" "origin/$BRANCH"
+  git -C "$SRC" reset -q --hard "origin/$BRANCH"
+  # remove untracked files in the source checkout only (never the install dir)
+  git -C "$SRC" clean -fdq -e config.php -e storage/
+  echo "[OK] source at $(git -C "$SRC" log -1 --format='%h %s')"
+}
+
+do_update() {
+  if [[ ! -f "$APP/config.php" ]]; then
+    echo "Not installed yet; choose 1 (fresh install)."; return 1
+  fi
+  sync_src && bash "$SRC/install.sh" --update --dir "$APP"
+}
+
+do_install() {
+  if [[ -f "$APP/config.php" ]]; then
+    local y=""
+    read -r -p "An install exists. A fresh install replaces the API key and admin password. Type 'yes' to continue: " y </dev/tty || y=""
+    [[ "$y" == "yes" ]] || { echo "Cancelled."; return 0; }
+  fi
+  [[ -f "$SRC/install.sh" ]] || { echo "No source at $SRC (run get.sh)."; return 1; }
+  bash "$SRC/install.sh" --install --dir "$APP"
 }
 
 menu() {
   need_root
+  local c=""
   while true; do
     echo
-    echo "======= پل‌بان $VERSION ======="
-    echo "  1) نصب / باز‌پیکربندی"
-    echo "  2) به‌روزرسانی از سورس git"
-    echo "  3) وضعیت"
-    echo "  4) نمایش مسیر پنل مدیریت وب"
-    echo "  5) خروج"
-    echo "================================"
-    read -r -p "گزینه: " c </dev/tty || exit 0
+    echo "======= Polban $VERSION ======="
+    echo "  1) Fresh install / reconfigure"
+    echo "  2) Update (git fetch + reset, keep config)"
+    echo "  3) Status"
+    echo "  4) Show admin panel URL"
+    echo "  5) Exit"
+    echo "==============================="
+    read -r -p "Choose [1-5]: " c </dev/tty || exit 0
     case "$c" in
-      1)
-        if [[ -f "$APP/config.php" ]]; then
-          read -r -p "نصب قبلی وجود دارد؛ نصب تازه کلید API و رمز پنل را عوض می‌کند. ادامه؟ (yes/no) " y </dev/tty || y=""
-          [[ "$y" == "yes" ]] || { echo "لغو شد."; continue; }
-        fi
-        bash "$SRC/install.sh" --install --dir "$APP" || echo "نصب ناموفق بود."
-        ;;
-      2)
-        if [[ ! -f "$APP/config.php" ]]; then
-          echo "هنوز نصب نشده؛ گزینهٔ ۱ را بزنید."
-        elif [[ -d "$SRC/.git" ]]; then
-          git -C "$SRC" pull --ff-only && bash "$SRC/install.sh" --update --dir "$APP" || echo "به‌روزرسانی ناموفق بود."
-        else
-          echo "سورس git در $SRC پیدا نشد. اول کلون کنید."
-        fi
-        ;;
+      1) do_install || echo "Install failed." ;;
+      2) if do_update; then PB_SRC="$SRC" PB_APP="$APP" exec bash "$APP/bin/polban" menu; else echo "Update failed."; fi ;;
       3) status ;;
-      4)
-        if [[ -f "$APP/config.php" ]]; then
-          php -r '$c=require "'"$APP"'/config.php"; echo rtrim($c["base_url"],"/")."/".trim($c["admin_path"],"/")."/\n";'
-        else
-          echo "هنوز نصب نشده."
-        fi
-        ;;
+      4) admin_url ;;
       5) exit 0 ;;
-      *) echo "گزینه نامعتبر" ;;
+      *) echo "Invalid choice" ;;
     esac
   done
 }
@@ -89,21 +137,15 @@ cmd="${1:-}"
 case "$cmd" in
   ""|menu) menu ;;
   status) status ;;
-  update)
-    need_root
-    [[ -d "$SRC/.git" ]] || { echo "no git src at $SRC"; exit 1; }
-    git -C "$SRC" pull --ff-only
-    exec bash "$SRC/install.sh" --update --dir "$APP"
-    ;;
-  install)
-    need_root
-    exec bash "${SRC}/install.sh" --install --dir "$APP"
-    ;;
+  url) admin_url ;;
+  update) need_root; do_update ;;
+  install) need_root; do_install ;;
   help|-h|--help)
-    echo "sudo polban          منوی مدیریت"
-    echo "sudo polban status   وضعیت"
-    echo "sudo polban update   git pull + نصب"
-    echo "sudo polban install  اجرای install.sh"
+    echo "sudo polban           management menu"
+    echo "sudo polban status    show status"
+    echo "sudo polban url       show admin panel URL"
+    echo "sudo polban update    fetch + reset source, update install (keeps config.php)"
+    echo "sudo polban install   fresh install / reconfigure"
     ;;
-  *) echo "unknown: $cmd"; exit 1 ;;
+  *) echo "unknown command: $cmd (try: polban help)"; exit 1 ;;
 esac

@@ -24,16 +24,36 @@ curl -fsSL https://raw.githubusercontent.com/silent4time/polban/main/get.sh | su
 ## مدیریت
 
 ```bash
-sudo polban
+sudo polban            # menu
+sudo polban status     # status (API key is never printed)
+sudo polban update     # git fetch + reset --hard origin/main, then install.sh --update
+sudo polban url        # admin panel URL
 ```
 
-منو:
+Menu (English):
 
-1. نصب / باز‌پیکربندی  
-2. به‌روزرسانی از git  
-3. وضعیت  
-4. نمایش مسیر پنل مدیریت وب  
-5. خروج  
+1. Fresh install / reconfigure (asks for `yes` if config.php exists)
+2. Update (git fetch + reset, keep config)
+3. Status
+4. Show admin panel URL
+5. Exit
+
+`install.sh` بدون آرگومان منو را باز می‌کند؛ `--install` نصب تازه و `--update` (یا `-y`) به‌روزرسانی مستقیم.
+به‌روزرسانی `config.php` را دست نمی‌زند (فقط timeout کمتر از ۶۰ به ۶۰ می‌رسد و مجوز `root:www-data 660` تنظیم می‌شود)، storage حفظ می‌شود و vhost آپاچی بازنویسی نمی‌شود.
+کلید API هرگز چاپ نمی‌شود: `sudo grep api_key /home/polban/config.php`
+
+## ارتقا از نسخه‌های 1.0.x (باینری کپی‌شده / سورس تغییر‌یافته)
+
+اگر `polban` نسخه را `?` نشان می‌دهد یا `git pull` با خطای «local changes» شکست می‌خورد:
+
+```bash
+sudo git -C /opt/polban-src config core.fileMode false
+sudo git -C /opt/polban-src fetch origin
+sudo git -C /opt/polban-src reset --hard origin/main
+sudo bash /opt/polban-src/install.sh --update
+```
+
+بعد از آن `/usr/local/bin/polban` یک symlink به `/home/polban/bin/polban` است و از این به بعد `sudo polban update` کافی است.
 
 ## API
 
