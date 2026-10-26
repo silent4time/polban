@@ -142,8 +142,14 @@ chown -R "$WEB_USER:$WEB_USER" "$TARGET/storage" 2>/dev/null || true
 install -m 755 "$TARGET/bin/polban" /usr/local/bin/polban
 # rewrite APP discovery is fine via readlink
 
-# Apache vhost hint
-if [[ -d /etc/apache2/sites-available ]]; then
+# Update mode: read display values from existing config (never the API key)
+if [[ $UPDATE -eq 1 ]]; then
+  BASE_URL="$(PB_CFG="$TARGET/config.php" php -r '$c=require getenv("PB_CFG"); echo rtrim((string)($c["base_url"]??""),"/");')"
+  ADMIN_PATH="$(PB_CFG="$TARGET/config.php" php -r '$c=require getenv("PB_CFG"); echo trim((string)($c["admin_path"]??""),"/");')"
+fi
+
+# Apache vhost hint (fresh install only; never rewrite on update)
+if [[ $UPDATE -eq 0 && -d /etc/apache2/sites-available ]]; then
   HOST="$(php -r 'echo parse_url($argv[1], PHP_URL_HOST);' "$BASE_URL")"
   if [[ -n "$HOST" ]]; then
     VHOST="/etc/apache2/sites-available/polban.conf"
@@ -163,6 +169,17 @@ APACHE
     a2enmod rewrite >/dev/null 2>&1 || true
     say "نمونهٔ Apache نوشته شد: $VHOST (در صورت نیاز a2ensite polban)"
   fi
+fi
+
+if [[ $UPDATE -eq 1 ]]; then
+  ok "به‌روزرسانی به $VERSION تمام شد (config.php حفظ شد)"
+  echo
+  echo "  آدرس سرویس:   ${BASE_URL:-?}"
+  echo "  سلامت:         ${BASE_URL:-?}/v1/health"
+  echo "  پنل مدیریت:    ${BASE_URL:-?}/${ADMIN_PATH:-?}/"
+  echo "  فرمان مدیریت:  sudo polban"
+  echo
+  exit 0
 fi
 
 ok "نصب تمام شد"
