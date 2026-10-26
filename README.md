@@ -13,8 +13,6 @@ curl -fsSL https://raw.githubusercontent.com/silent4time/polban/main/get.sh | su
 ```
 
 بعد از اجرا منوی مدیریت باز می‌شود (نصب تازه، به‌روزرسانی، وضعیت، مسیر پنل).
-```bash
-```
 
 ریپو خصوصی است؛ یکی از این‌ها لازم است:
 
